@@ -1,0 +1,95 @@
+---
+- hosts: all
+  become: true
+  vars_files:
+    - vars/default.yml
+
+  tasks:
+    - name: Install prerequisites
+      apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
+      loop: [ 'aptitude', 'git', 'php', 'composer', 'nodejs', 'npm',
+        # PHP extensions
+        'php-ctype', 'php-curl', 'php-gd', 'php-iconv', 'php-json',
+        'php-mbstring', 'php-mysqli', 'php-simplexml',
+        # Optional php extensions
+        'php-exif', 'php-imap', 'php-ldap', 'php-zip', 'php-bz2',
+        'php-apcu', 'php-opcache', 'php-xmlrpc'
+      ]
+
+###### APACHE CONFIGURATION ######
+    - name: Install Apache
+      apt: name=apache2 update_cache=yes state=latest
+
+    - name: Add php apache module
+      shell: /usr/sbin/a2enmod php8.2
+      notify: Restart Apache
+
+    - name: Create document root
+      file:
+        path: "/var/www/{{ http_host }}"
+        state: directory
+        owner: "{{ app_user }}"
+        mode: '0755'
+
+    - name: Set up Apache virtualHost
+      template:
+        src: "files/apache.conf.j2"
+        dest: "/etc/apache2/sites-available/{{ http_conf }}"
+
+    - name: Enable new site
+      shell: /usr/sbin/a2ensite {{ http_conf }}
+      notify: Reload Apache
+
+    - name: Disable default Apache site
+      shell: /usr/sbin/a2dissite 000-default.conf
+      when: disable_default
+      notify: Reload Apache
+
+##### ITSM-NG CONFIGURATION #####
+    - name: clone ITSM-NG repository
+      git: repo=https://github.com/itsmng/itsm-ng dest=/var/www/{{ http_host }} version=main
+
+    - name: Install dependencies
+      ansible.builtin.shell: php bin/console dependencies install
+      args:
+        chdir: /var/www/{{ http_host }}
+
+#### SETUP MARIADB ####
+    - name: Install MariaDB
+      apt: name=mariadb-server update_cache=yes state=latest
+
+    - name: Create database
+      mysql_db:
+        name: "{{ db_name }}"
+        state: present
+
+    - name: Create database user
+      mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        priv: "{{ db_name }}.*:ALL"
+        state: present
+
+    - name: Import database schema
+      mysql_db:
+        name: "{{ db_name }}"
+        state: import
+        target: /var/www/{{ http_host }}/db/schema.sql
+
+    - name: Update database schema
+      ansible.builtin.shell: php bin/console doctrine:schema:update --force
+      args:
+        chdir: /var/www/{{ http_host
+
+
+
+  handlers:
+    - name: Reload Apache
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted

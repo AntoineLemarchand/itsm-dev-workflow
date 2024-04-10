@@ -1,0 +1,9 @@
+---
+app_user: "root"
+http_host: "itsm-ng"
+http_conf: "itsm-ng.conf"
+http_port: "80"
+disable_default: true
+db_name: "itsmng"
+db_user: "itsmng"
+db_password: "itsmng"
