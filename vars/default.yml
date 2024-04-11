@@ -1,9 +1,15 @@
 ---
-app_user: "root"
+app_user: "vagrant"
 http_host: "itsm-ng"
 http_conf: "itsm-ng.conf"
 http_port: "80"
 disable_default: true
+
 db_name: "itsmng"
 db_user: "itsmng"
 db_password: "itsmng"
+mysql_root_password: "root"
+
+repo: YOUR SSH REPO
+git_email: YOUR EMAIL
+git_user: YOUR NAME

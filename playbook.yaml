@@ -4,19 +4,46 @@
   vars_files:
     - vars/default.yml
 
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
   tasks:
     - name: Install prerequisites
       apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
       loop: [ 'aptitude', 'git', 'php', 'composer', 'nodejs', 'npm',
+        # ssh
+        'openssh-client', 'openssh-server',
         # PHP extensions
         'php-ctype', 'php-curl', 'php-gd', 'php-iconv', 'php-json',
         'php-mbstring', 'php-mysqli', 'php-simplexml',
         # Optional php extensions
         'php-exif', 'php-imap', 'php-ldap', 'php-zip', 'php-bz2',
         'php-apcu', 'php-opcache', 'php-xmlrpc'
-      ]
+        ]
 
-###### APACHE CONFIGURATION ######
+    - name: Copy ssh key from local machine
+      copy:
+        src: "ssh/{{ item }}"
+        dest: "/home/{{ app_user }}/.ssh/{{ item }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0600'
+      with_items:
+        - id_rsa
+        - id_rsa.pub
+
+    - name: Load ssh key with passphrase
+      become: false
+      shell: |
+        eval `ssh-agent -s` && echo '{{ ssh_passphrase }}' | ssh-add ~/.ssh/id_rsa 
+
+
+    - name: Configuring git
+      ansible.builtin.shell: |
+        git config --global user.email "{{ git_email }}"
+        git config --global user.name "{{ git_user }}"
+
+        ###### APACHE CONFIGURATION ######
     - name: Install Apache
       apt: name=apache2 update_cache=yes state=latest
 
@@ -45,43 +72,64 @@
       when: disable_default
       notify: Reload Apache
 
-##### ITSM-NG CONFIGURATION #####
-    - name: clone ITSM-NG repository
-      git: repo=https://github.com/itsmng/itsm-ng dest=/var/www/{{ http_host }} version=main
+        ##### ITSM-NG CONFIGURATION #####
+        #
+
+    - name: Clone GitHub Repo
+      remote_user: "{{ app_user }}"
+      git:
+        repo: "{{ repo }}"
+        dest: "/var/www/{{ http_host }}"
+        accept_hostkey: yes
+      environment:
+        GIT_SSH_COMMAND: 'ssh -i /home/vagrant/.ssh/id_rsa -o StrictHostKeyChecking=no'
 
     - name: Install dependencies
       ansible.builtin.shell: php bin/console dependencies install
       args:
         chdir: /var/www/{{ http_host }}
 
-#### SETUP MARIADB ####
-    - name: Install MariaDB
-      apt: name=mariadb-server update_cache=yes state=latest
+    - name: setting rights to www-data
+      ansible.builtin.shell: chown -R www-data:www-data /var/www/{{ http_host }}
+
+    - name: giving write permissions to group
+      ansible.builtin.shell: chmod -R g+w /var/www/{{ http_host }}
+
+    - name: add vagrant user to www-data group
+      ansible.builtin.shell: usermod -a -G www-data vagrant
+
+        #### SETUP MARIADB ####
+    - name: Install MariaDB prerequisites
+      apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
+      loop: [ 'python3-pymysql', 'python3-pexpect', 'mariadb-server' ]
+
+    - name: Start MariaDB
+      service:
+        name: mariadb
+        state: started
+
+    - name: Set root user password
+      community.mysql.mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        check_implicit_admin: true
+        login_unix_socket: /var/run/mysqld/mysqld.sock
 
     - name: Create database
-      mysql_db:
-        name: "{{ db_name }}"
+      community.mysql.mysql_db:
+        name: itsmng
         state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
 
-    - name: Create database user
-      mysql_user:
-        name: "{{ db_user }}"
-        password: "{{ db_password }}"
-        priv: "{{ db_name }}.*:ALL"
+    - name: Create user
+      community.mysql.mysql_user:
+        name: itsmng
+        password: itsmng
+        priv: 'itsmng.*:ALL'
         state: present
-
-    - name: Import database schema
-      mysql_db:
-        name: "{{ db_name }}"
-        state: import
-        target: /var/www/{{ http_host }}/db/schema.sql
-
-    - name: Update database schema
-      ansible.builtin.shell: php bin/console doctrine:schema:update --force
-      args:
-        chdir: /var/www/{{ http_host
-
-
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
 
   handlers:
     - name: Reload Apache

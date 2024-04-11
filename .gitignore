@@ -1,1 +1,3 @@
 .vagrant
+.vaultpass
+/files/ssh/
